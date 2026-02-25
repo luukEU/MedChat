@@ -1,0 +1,114 @@
+<?php
+require_once "db.php";
+
+$allowed = ["vallen","medicatie","wondzorg","diabetes"];
+$cat = $_GET["cat"] ?? "";
+if (!in_array($cat, $allowed, true)) {
+  header("Location: index.php");
+  exit;
+}
+
+session_start();
+if (!isset($_SESSION["session_id"])) {
+  $_SESSION["session_id"] = bin2hex(random_bytes(16));
+}
+$sessionId = $_SESSION["session_id"];
+
+$stmt = $pdo->prepare("
+  SELECT role, message, created_at
+  FROM chat_messages
+  WHERE session_id = ? AND category = ?
+  ORDER BY id ASC
+  LIMIT 250
+");
+$stmt->execute([$sessionId, $cat]);
+$messages = $stmt->fetchAll();
+
+function h($s){ return htmlspecialchars($s, ENT_QUOTES, "UTF-8"); }
+
+$topicTitle = [
+  "vallen" => "Vallen / valpreventie",
+  "medicatie" => "Medicatie-inname / veiligheid",
+  "wondzorg" => "Wondzorg (basis)",
+  "diabetes" => "Diabetes (basis)",
+][$cat];
+?>
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><?= h($topicTitle) ?> – MedChat</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="row">
+        <a class="link" href="index.php">← Terug</a>
+        <h1 class="h1"><?= h($topicTitle) ?></h1>
+      </div>
+      <button class="btn ghost" id="themeToggle" type="button">🌙 Dark mode</button>
+    </header>
+
+    <div class="notice">
+      <b>Demo/leerproject.</b> Geen diagnose. Bij bewustzijnverlies, ernstige pijn, veel bloed,
+      benauwdheid of snelle achteruitgang: <b>112</b>. Bij twijfel: huisarts/huisartsenpost.
+    </div>
+
+    <div class="chatbox" id="chatbox">
+      <?php if (count($messages) === 0): ?>
+        <div class="empty">
+          <p><b>Tip:</b> Stel je vraag zo concreet mogelijk.</p>
+          <p class="muted">Voorbeeld: “Oma (82) is gevallen en heeft heuppijn, wat is verstandig?”</p>
+        </div>
+      <?php endif; ?>
+
+      <?php foreach ($messages as $m): ?>
+        <div class="msg <?= h($m["role"]) ?>">
+          <div class="bubble"><?= nl2br(h($m["message"])) ?></div>
+          <div class="meta"><?= h($m["created_at"]) ?></div>
+        </div>
+      <?php endforeach; ?>
+    </div>
+
+    <form class="chatform" method="post" action="save.php" autocomplete="off">
+      <input type="hidden" name="category" value="<?= h($cat) ?>">
+      <input class="input" type="text" name="question" placeholder="Stel je vraag..." required maxlength="700">
+      <button class="btn" type="submit">Verstuur</button>
+    </form>
+
+    <div class="quick">
+      <span class="muted">Snelle voorbeelden:</span>
+      <?php if ($cat === "vallen"): ?>
+        <button class="chip" type="button" data-fill="Iemand van 80 is gevallen en heeft heuppijn. Wat nu?">Heuppijn</button>
+        <button class="chip" type="button" data-fill="Hoofd gestoten en gebruikt bloedverdunners. Wat is slim?">Hoofd + bloedverdunners</button>
+      <?php elseif ($cat === "medicatie"): ?>
+        <button class="chip" type="button" data-fill="Ik ben een dosis vergeten. Wat is verstandig?">Dosis vergeten</button>
+        <button class="chip" type="button" data-fill="Kan ik medicijnen combineren?">Combineren</button>
+      <?php elseif ($cat === "wondzorg"): ?>
+        <button class="chip" type="button" data-fill="Snijwond blijft bloeden. Wat nu?">Bloeding</button>
+        <button class="chip" type="button" data-fill="Wond is rood en warm. Wanneer huisarts?">Infectie</button>
+      <?php else: ?>
+        <button class="chip" type="button" data-fill="Ik denk dat ik een hypo heb. Wat zijn signalen?">Hypo</button>
+        <button class="chip" type="button" data-fill="Veel dorst en veel plassen. Kan dat hoge suiker zijn?">Hyper</button>
+      <?php endif; ?>
+    </div>
+  </div>
+
+  <script>
+    const cb = document.getElementById("chatbox");
+    cb.scrollTop = cb.scrollHeight;
+
+    // chips vullen input
+    document.querySelectorAll("[data-fill]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const input = document.querySelector('input[name="question"]');
+        input.value = btn.getAttribute("data-fill");
+        input.focus();
+      });
+    });
+  </script>
+</body>
+</html>
