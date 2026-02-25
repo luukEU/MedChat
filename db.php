@@ -1,9 +1,9 @@
 <?php
-// db.php
+// Databse connectie 
 $host = "localhost";
 $db   = "medchat_demo";
 $user = "root";
-$pass = ""; // WAMP vaak leeg
+$pass = ""; // Leeg want gebruik root 
 $charset = "utf8mb4";
 
 $dsn = "mysql:host=$host;dbname=$db;charset=$charset";

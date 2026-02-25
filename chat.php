@@ -8,6 +8,9 @@ if (!in_array($cat, $allowed, true)) {
   exit;
 }
 
+$KB = require __DIR__ . "/knowledge.php";
+$fields = $KB["categories"][$cat]["fields"] ?? [];
+
 session_start();
 if (!isset($_SESSION["session_id"])) {
   $_SESSION["session_id"] = bin2hex(random_bytes(16));
@@ -26,12 +29,7 @@ $messages = $stmt->fetchAll();
 
 function h($s){ return htmlspecialchars($s, ENT_QUOTES, "UTF-8"); }
 
-$topicTitle = [
-  "vallen" => "Vallen / valpreventie",
-  "medicatie" => "Medicatie-inname / veiligheid",
-  "wondzorg" => "Wondzorg (basis)",
-  "diabetes" => "Diabetes (basis)",
-][$cat];
+$topicTitle = $KB["categories"][$cat]["label"] ?? $cat;
 ?>
 <!doctype html>
 <html lang="nl">
@@ -49,7 +47,15 @@ $topicTitle = [
         <a class="link" href="index.php">← Terug</a>
         <h1 class="h1"><?= h($topicTitle) ?></h1>
       </div>
-      <button class="btn ghost" id="themeToggle" type="button">🌙 Dark mode</button>
+
+      <div class="row">
+        <form method="post" action="clear.php" onsubmit="return confirm('Weet je zeker dat je deze chat wilt legen?');">
+          <input type="hidden" name="category" value="<?= h($cat) ?>">
+          <button class="btn ghost" type="submit">🧹 Chat legen</button>
+        </form>
+
+        <button class="btn ghost" id="themeToggle" type="button">🌙 Dark mode</button>
+      </div>
     </header>
 
     <div class="notice">
@@ -73,7 +79,41 @@ $topicTitle = [
       <?php endforeach; ?>
     </div>
 
-    <form class="chatform" method="post" action="save.php" autocomplete="off">
+    <!-- Extra info panel (optioneel) -->
+    <div class="panel">
+      <div class="panelTitle">Extra info (optioneel)</div>
+
+      <div class="formGrid">
+        <?php foreach ($fields as $name => $cfg): ?>
+          <?php $type = $cfg["type"] ?? ""; ?>
+
+          <?php if ($type === "number"): ?>
+            <label class="field">
+              <span><?= h($cfg["label"] ?? $name) ?></span>
+              <input class="input"
+                     type="number"
+                     name="<?= h($name) ?>"
+                     form="chatForm"
+                     min="<?= (int)($cfg["min"] ?? 0) ?>"
+                     max="<?= (int)($cfg["max"] ?? 999) ?>"
+                     step="1">
+            </label>
+
+          <?php elseif ($type === "checkbox"): ?>
+            <label class="check">
+              <input type="checkbox"
+                     name="<?= h($name) ?>"
+                     value="1"
+                     form="chatForm">
+              <span><?= h($cfg["label"] ?? $name) ?></span>
+            </label>
+          <?php endif; ?>
+        <?php endforeach; ?>
+      </div>
+    </div>
+
+    <!-- Chat form -->
+    <form class="chatform" id="chatForm" method="post" action="save.php" autocomplete="off">
       <input type="hidden" name="category" value="<?= h($cat) ?>">
       <input class="input" type="text" name="question" placeholder="Stel je vraag..." required maxlength="700">
       <button class="btn" type="submit">Verstuur</button>
@@ -81,15 +121,19 @@ $topicTitle = [
 
     <div class="quick">
       <span class="muted">Snelle voorbeelden:</span>
+
       <?php if ($cat === "vallen"): ?>
         <button class="chip" type="button" data-fill="Iemand van 80 is gevallen en heeft heuppijn. Wat nu?">Heuppijn</button>
         <button class="chip" type="button" data-fill="Hoofd gestoten en gebruikt bloedverdunners. Wat is slim?">Hoofd + bloedverdunners</button>
+
       <?php elseif ($cat === "medicatie"): ?>
         <button class="chip" type="button" data-fill="Ik ben een dosis vergeten. Wat is verstandig?">Dosis vergeten</button>
         <button class="chip" type="button" data-fill="Kan ik medicijnen combineren?">Combineren</button>
+
       <?php elseif ($cat === "wondzorg"): ?>
         <button class="chip" type="button" data-fill="Snijwond blijft bloeden. Wat nu?">Bloeding</button>
         <button class="chip" type="button" data-fill="Wond is rood en warm. Wanneer huisarts?">Infectie</button>
+
       <?php else: ?>
         <button class="chip" type="button" data-fill="Ik denk dat ik een hypo heb. Wat zijn signalen?">Hypo</button>
         <button class="chip" type="button" data-fill="Veel dorst en veel plassen. Kan dat hoge suiker zijn?">Hyper</button>
@@ -101,7 +145,6 @@ $topicTitle = [
     const cb = document.getElementById("chatbox");
     cb.scrollTop = cb.scrollHeight;
 
-    // chips vullen input
     document.querySelectorAll("[data-fill]").forEach(btn => {
       btn.addEventListener("click", () => {
         const input = document.querySelector('input[name="question"]');

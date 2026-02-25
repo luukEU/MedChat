@@ -1,254 +1,320 @@
 <?php
 // engine.php
+$KB = require __DIR__ . "/knowledge.php";
 
 function disclaimer(): string {
-  return "Let op: dit is een demo/leerproject en geen medisch advies. Ik kan geen diagnose stellen. Bij spoed: 112. Bij twijfel: huisarts/huisartsenpost.";
+  return "Let op: demo/leerproject. Geen diagnose. Bij spoed: 112. Bij twijfel: huisarts/huisartsenpost.";
 }
 
-function guess_category(string $q): string {
-  $q = mb_strtolower($q);
+function category_label(string $cat, array $KB): string {
+  return $KB["labels"][$cat] ?? $cat;
+}
 
-  $map = [
-    "vallen" => ["gevallen","val","struik","uitgegleden","heup","pols","hoofd","blauwe plek","valpreventie","evenwicht","rollator","botbreuk"],
-    "medicatie" => ["medicatie","pil","pillen","tablet","dosis","vergeten","bijsluiter","apotheek","recept","antibiotica","bloedverdunner","paracetamol","ibuprofen"],
-    "wondzorg" => ["wond","bloeden","snijwond","snee","verband","pleister","infectie","pus","rood","zwelling","hechten","brandwond","schaafwond"],
-    "diabetes" => ["diabetes","glucose","suiker","hypo","hyper","insuline","meten","mmol","hba1c","dorst","veel plassen","koolhydraten"]
-  ];
+function guess_category(string $q, array $KB): string {
+  $q2 = mb_strtolower($q);
+  $scores = [];
 
-  $scores = ["vallen"=>0,"medicatie"=>0,"wondzorg"=>0,"diabetes"=>0];
-  foreach ($map as $cat => $words) {
-    foreach ($words as $w) {
-      if (str_contains($q, $w)) $scores[$cat]++;
+  foreach ($KB["categories"] as $cat => $info) {
+    $scores[$cat] = 0;
+    foreach (($info["keywords"] ?? []) as $w) {
+      if (str_contains($q2, $w)) $scores[$cat]++;
     }
   }
 
   arsort($scores);
-  $bestCat = array_key_first($scores);
-  $bestScore = $scores[$bestCat] ?? 0;
-
-  return ($bestScore < 1) ? "onbekend" : $bestCat;
+  $best = array_key_first($scores);
+  $bestScore = $scores[$best] ?? 0;
+  return ($bestScore < 1) ? "onbekend" : $best;
 }
 
-function red_flags(string $q): array {
-  $q = mb_strtolower($q);
-  $flags = [];
-  $words = [
-    "bewusteloos","niet aanspreekbaar","stuipen","hevige pijn","veel bloed",
-    "benauwd","borstpijn","ernstig","plots","verward","niet kunnen staan",
-    "flauwvallen","bloeding stopt niet"
-  ];
-  foreach ($words as $w) {
-    if (str_contains($q, $w)) $flags[] = $w;
+function find_red_flags_in_text(string $q, array $KB): array {
+  $q2 = mb_strtolower($q);
+  $found = [];
+  foreach ($KB["red_flags"] as $w) {
+    if (str_contains($q2, $w)) $found[] = $w;
   }
-  return array_values(array_unique($flags));
+  return array_values(array_unique($found));
 }
 
-// --- subtopics
-function sub_fallen(string $q): string {
-  $q = mb_strtolower($q);
-  if (str_contains($q,"hoofd")) return "hoofd";
-  if (str_contains($q,"heup") || str_contains($q,"niet kunnen staan") || str_contains($q,"niet lopen")) return "heup";
-  if (str_contains($q,"bloedverdunner")) return "bloedverdunners";
-  if (str_contains($q,"duizelig") || str_contains($q,"verward")) return "duizelig";
-  return "algemeen";
+function boolv($meta, $key): bool {
+  return isset($meta[$key]) && ($meta[$key] === true || $meta[$key] === "1" || $meta[$key] === 1);
+}
+function intv($meta, $key): int {
+  return isset($meta[$key]) ? (int)$meta[$key] : 0;
+}
+function floatv($meta, $key): float {
+  return isset($meta[$key]) ? (float)$meta[$key] : 0.0;
 }
 
-function sub_meds(string $q): string {
-  $q = mb_strtolower($q);
-  if (str_contains($q,"vergeten") || str_contains($q,"dosis")) return "vergeten";
-  if (str_contains($q,"combin") || str_contains($q,"samen")) return "combineren";
-  if (str_contains($q,"bijsluiter")) return "bijsluiter";
-  return "algemeen";
+/**
+ * Bepaalt welke follow-up vragen nodig zijn (A-modus).
+ * Return: array met items: ['key'=>'age','q'=>'Wat is de leeftijd ongeveer?','type'=>'number|yesno']
+ */
+function plan_followups(string $cat, string $question, array $meta, array $KB): array {
+  $q = mb_strtolower($question);
+  $need = [];
+
+  // Als vraag super vaag is (geen keywords) -> vraag eerst om verduidelijking
+  $guessed = guess_category($question, $KB);
+  if ($guessed === "onbekend" && mb_strlen(trim($question)) < 12) {
+    $need[] = ["key"=>"clarify", "q"=>"Kun je iets meer uitleggen wat er precies aan de hand is?", "type"=>"text"];
+    return $need;
+  }
+
+  if ($cat === "vallen") {
+    if (!isset($meta["age"])) $need[] = ["key"=>"age","q"=>"Wat is de leeftijd ongeveer?","type"=>"number"];
+    if (!isset($meta["unconscious"])) $need[] = ["key"=>"unconscious","q"=>"Is iemand (even) buiten bewustzijn geweest of niet goed aanspreekbaar? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["head_hit"])) $need[] = ["key"=>"head_hit","q"=>"Is het hoofd geraakt? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["blood_thinners"])) $need[] = ["key"=>"blood_thinners","q"=>"Gebruikt iemand bloedverdunners? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["hip_pain"])) $need[] = ["key"=>"hip_pain","q"=>"Is er heup/been pijn of kan iemand niet staan/lopen? (ja/nee)","type"=>"yesno"];
+  }
+
+  if ($cat === "medicatie") {
+    if (!isset($meta["age"])) $need[] = ["key"=>"age","q"=>"Wat is de leeftijd ongeveer?","type"=>"number"];
+    if (!isset($meta["missed_dose"])) $need[] = ["key"=>"missed_dose","q"=>"Gaat het om een dosis die is vergeten? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["side_effects"])) $need[] = ["key"=>"side_effects","q"=>"Zijn er klachten/bijwerkingen op dit moment? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["many_meds"])) $need[] = ["key"=>"many_meds","q"=>"Gebruikt iemand meerdere medicijnen? (ja/nee)","type"=>"yesno"];
+  }
+
+  if ($cat === "wondzorg") {
+    if (!isset($meta["age"])) $need[] = ["key"=>"age","q"=>"Wat is de leeftijd ongeveer?","type"=>"number"];
+    if (!isset($meta["bleeding"])) $need[] = ["key"=>"bleeding","q"=>"Stopt het bloeden niet of is er veel bloed? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["deep_wound"])) $need[] = ["key"=>"deep_wound","q"=>"Is het een diepe wond (randen wijken) / mogelijk hechten? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["infection_signs"])) $need[] = ["key"=>"infection_signs","q"=>"Zijn er infectietekenen (rood/warm/pus/koorts)? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["burn"])) $need[] = ["key"=>"burn","q"=>"Gaat het om een brandwond? (ja/nee)","type"=>"yesno"];
+  }
+
+  if ($cat === "diabetes") {
+    if (!isset($meta["age"])) $need[] = ["key"=>"age","q"=>"Wat is de leeftijd ongeveer?","type"=>"number"];
+    if (!isset($meta["hypo_signs"])) $need[] = ["key"=>"hypo_signs","q"=>"Zijn er hypo-signalen (trillen/zweten/verward)? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["hyper_signs"])) $need[] = ["key"=>"hyper_signs","q"=>"Zijn er hyper-signalen (veel dorst/veel plassen)? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["insulin"])) $need[] = ["key"=>"insulin","q"=>"Wordt er insuline gebruikt? (ja/nee)","type"=>"yesno"];
+    if (!isset($meta["glucose_value"])) $need[] = ["key"=>"glucose_value","q"=>"Als er gemeten is: wat is de glucosewaarde (mmol/L)? (laat leeg als onbekend)","type"=>"number_optional"];
+  }
+
+  // Houd het compact: max 4 vragen
+  return array_slice($need, 0, 4);
 }
 
-function sub_wound(string $q): string {
-  $q = mb_strtolower($q);
-  if (str_contains($q,"bloeden") || str_contains($q,"bloeding")) return "bloeding";
-  if (str_contains($q,"rood") || str_contains($q,"warm") || str_contains($q,"pus") || str_contains($q,"infectie")) return "infectie";
-  if (str_contains($q,"brandwond")) return "brandwond";
-  return "algemeen";
+function format_followup_message(array $followups): string {
+  $lines = [];
+  $lines[] = "Ik kan je beter helpen als ik 1–4 dingen weet. Antwoord zo:\n1) ... 2) ... 3) ...";
+  $lines[] = "";
+  $i = 1;
+  foreach ($followups as $f) {
+    $lines[] = $i . ") " . $f["q"];
+    $i++;
+  }
+  return implode("\n", $lines);
 }
 
-function sub_diabetes(string $q): string {
-  $q = mb_strtolower($q);
-  if (str_contains($q,"hypo") || str_contains($q,"trillen") || str_contains($q,"zweten") || str_contains($q,"verward")) return "hypo";
-  if (str_contains($q,"hyper") || str_contains($q,"dorst") || str_contains($q,"veel plassen") || str_contains($q,"misselijk")) return "hyper";
-  if (str_contains($q,"meten") || str_contains($q,"mmol") || str_contains($q,"glucose")) return "meten";
-  if (str_contains($q,"eten") || str_contains($q,"koolhydraat")) return "voeding";
-  return "algemeen";
+/**
+ * Parseert antwoorden op followups uit 1 bericht.
+ * Verwacht bijv: "1) ja 2) nee 3) 82"
+ */
+function parse_followup_answers(string $text, array $followups): array {
+  $out = [];
+
+  // Maak een simpele mapping nummer -> waarde
+  // We pakken "1) ...." of "1: ...." of "1 ...."
+  $pattern = '/(\d+)\s*[\)\:\-]?\s*([^\n\r]+)/u';
+  preg_match_all($pattern, $text, $matches, PREG_SET_ORDER);
+
+  $byNum = [];
+  foreach ($matches as $m) {
+    $n = (int)$m[1];
+    $val = trim($m[2]);
+    $byNum[$n] = $val;
+  }
+
+  // Als iemand gewoon "ja nee 82" typt zonder nummers -> fallback split
+  if (count($byNum) === 0) {
+    $parts = preg_split('/\s+/u', trim($text));
+    for ($i=0; $i<count($parts); $i++) {
+      $byNum[$i+1] = $parts[$i];
+    }
+  }
+
+  // Convert per type
+  for ($i=0; $i<count($followups); $i++) {
+    $f = $followups[$i];
+    $num = $i + 1;
+    $raw = $byNum[$num] ?? "";
+
+    $key = $f["key"];
+    $type = $f["type"];
+
+    if ($key === "clarify") {
+      if ($raw !== "") $out["clarify"] = $raw;
+      continue;
+    }
+
+    if ($type === "yesno") {
+      $r = mb_strtolower($raw);
+      $out[$key] = (str_contains($r, "ja") || $r === "1" || $r === "true") ? "1" : "0";
+      continue;
+    }
+
+    if ($type === "number") {
+      $out[$key] = (string)intval(preg_replace('/[^\d]/u', '', $raw));
+      continue;
+    }
+
+    if ($type === "number_optional") {
+      $digits = preg_replace('/[^\d\.]/u', '', $raw);
+      $out[$key] = ($digits === "") ? "" : (string)floatval($digits);
+      continue;
+    }
+
+    // text fallback
+    $out[$key] = $raw;
+  }
+
+  return $out;
 }
 
-function category_label(string $cat): string {
-  return [
-    "vallen" => "Vallen / valpreventie",
-    "medicatie" => "Medicatie-inname / veiligheid",
-    "wondzorg" => "Wondzorg (basis)",
-    "diabetes" => "Diabetes (basis)",
-  ][$cat] ?? $cat;
-}
-
-function generate_answer(string $cat, string $question): string {
+/**
+ * Definitieve antwoordgenerator (jouw bestaande logica, maar met meta).
+ */
+function generate_final_answer(string $cat, string $question, array $meta, array $KB): string {
   $q = trim($question);
-  $guessed = guess_category($q);
 
-  // Past het bij deze categorie?
+  // mismatch check
+  $guessed = guess_category($q, $KB);
   if ($guessed !== "onbekend" && $guessed !== $cat) {
-    return "Ik denk dat je vraag beter past bij **" . category_label($guessed) . "**.\n"
+    $label = category_label($guessed, $KB);
+    return "Ik denk dat je vraag beter past bij **{$label}**.\n"
       . "Tip: ga terug en kies die categorie, dan kan ik gerichter antwoorden.\n\n"
-      . "Waarom? Ik herken in je vraag woorden die meer bij dat onderwerp horen.\n\n"
       . disclaimer();
   }
 
-  // Rode vlaggen
-  $flags = red_flags($q);
+  // red flags text
+  $flags = find_red_flags_in_text($q, $KB);
   if (count($flags) > 0) {
     return "Ik zie mogelijk een *spoed-signaal* in je vraag (bijv.: " . implode(", ", $flags) . ").\n"
-      . "Ik kan geen diagnose stellen. Als dit echt speelt of je twijfelt: bel 112 of neem direct contact op met de huisarts/huisartsenpost.\n\n"
+      . "Bij twijfel of als dit echt zo is: bel 112 of neem direct contact op met huisarts/huisartsenpost.\n\n"
       . disclaimer();
   }
 
-  // Antwoorden per categorie + subtopic
   switch ($cat) {
     case "vallen": {
-      $sub = sub_fallen($q);
+      $age = intv($meta, "age");
+      $unconscious = boolv($meta, "unconscious");
+      $bleeding = boolv($meta, "bleeding");
+      $hip = boolv($meta, "hip_pain");
+      $conf = boolv($meta, "confused");
+      $head = boolv($meta, "head_hit");
+      $thinners = boolv($meta, "blood_thinners");
 
-      if ($sub === "heup") {
-        return "Bij vallen met **heuppijn** of **niet kunnen staan/lopen** is het verstandig om snel medische hulp te regelen.\n"
-          . "- Laat iemand zitten/liggen en forceer niet om te lopen.\n"
-          . "- Bij heftige pijn of duidelijke beperking: huisarts/112 (afhankelijk van situatie).\n\n"
+      if ($unconscious || $bleeding || $hip || $conf) {
+        return "NU DOEN: **regel direct medische hulp (112/huisarts spoed)**.\n"
+          . "CHECKLIST:\n- Blijf bij de persoon\n- Laat zitten/liggen\n- Forceer niet om te lopen\n\n"
           . disclaimer();
       }
 
-      if ($sub === "hoofd") {
-        return "Bij **hoofd stoten** na een val is het belangrijk om goed te letten op klachten.\n"
-          . "- Bij suf worden, verwardheid, braken of erger wordende hoofdpijn: huisarts/112.\n"
-          . "- Als het meevalt: iemand laten rusten en extra controleren.\n\n"
+      if ($head && $thinners) {
+        return "NU DOEN: **neem contact op met huisarts/huisartsenpost (zelfde dag)**.\n"
+          . "Hoofd + bloedverdunners is een reden om sneller te overleggen.\n\n"
           . disclaimer();
       }
 
-      if ($sub === "bloedverdunners") {
-        return "Als iemand **bloedverdunners** gebruikt en is gevallen (zeker met hoofdletsel), dan is het slimmer om eerder contact op te nemen met huisarts/huisartsenpost.\n"
-          . "Dat is omdat bloedingen soms minder snel zichtbaar zijn.\n\n"
-          . disclaimer();
-      }
+      $extra = ($age >= 75) ? "Omdat de persoon {$age}+ is, is het slim om bij twijfel sneller te overleggen met huisarts.\n\n" : "";
 
-      if ($sub === "duizelig") {
-        return "Als iemand na een val **duizelig of verward** is, is dat een signaal om extra voorzichtig te zijn.\n"
-          . "- Laat iemand zitten/liggen.\n"
-          . "- Neem contact op met huisarts/huisartsenpost bij twijfel.\n\n"
-          . disclaimer();
-      }
-
-      return "Algemeen bij vallen:\n"
-        . "1) Check: aanspreekbaar? hoofd geraakt? veel pijn? kan iemand staan?\n"
-        . "2) Bij twijfel of duidelijke klachten: huisarts/112.\n"
-        . "3) Denk ook aan preventie: goede schoenen, hulpmiddelen, verlichting, spullen uit de looproute.\n\n"
+      return "NU DOEN: rust, controleren en bij twijfel huisarts.\n"
+        . $extra
+        . "CHECKLIST:\n- Aanspreekbaar?\n- Hoofd geraakt?\n- Pijn (heup/pols)?\n- Kan iemand veilig staan/lopen?\n\n"
+        . "WANNEER HULP:\n- Bij toenemende klachten, duizeligheid of veel pijn\n\n"
         . disclaimer();
     }
 
     case "medicatie": {
-      $sub = sub_meds($q);
+      $missed = boolv($meta, "missed_dose");
+      $double = boolv($meta, "double_dose");
+      $side = boolv($meta, "side_effects");
+      $many = boolv($meta, "many_meds");
 
-      if ($sub === "vergeten") {
-        return "Als je een **dosis bent vergeten**:\n"
-          . "- Neem niet automatisch dubbel.\n"
-          . "- Kijk in de bijsluiter of bel de apotheek voor advies.\n"
-          . "- Als je je ziek voelt of het gaat om belangrijke medicatie: neem sneller contact op.\n\n"
+      if ($double) {
+        return "NU DOEN: **neem contact op met de apotheek** (en bij klachten huisarts).\n\n"
+          . "CHECKLIST:\n- Welke medicatie?\n- Hoeveel en hoe laat?\n- Welke klachten?\n\n"
           . disclaimer();
       }
 
-      if ($sub === "combineren") {
-        return "Over **medicijnen combineren** kan ik geen persoonlijk advies geven.\n"
-          . "- Sommige combinaties kunnen problemen geven.\n"
-          . "- Het veiligste is: apotheek of huisarts bellen (zeker bij meerdere medicijnen).\n\n"
+      if ($missed) {
+        $extra = $many ? "Omdat er meerdere medicijnen gebruikt worden, is het extra slim om even te checken bij de apotheek.\n\n" : "";
+        return "NU DOEN: **niet automatisch dubbel nemen**.\n"
+          . $extra
+          . "CHECKLIST:\n- Kijk in bijsluiter of bel apotheek\n- Bij ziek gevoel: huisarts\n\n"
           . disclaimer();
       }
 
-      if ($sub === "bijsluiter") {
-        return "Bij vragen over de **bijsluiter**:\n"
-          . "- Let op: dosering, waarschuwingen, bijwerkingen, wanneer stoppen/arts bellen.\n"
-          . "- Bij twijfel: apotheek is meestal de snelste en beste plek om te checken.\n\n"
+      if ($side) {
+        return "Bij **bijwerkingen/ziek gevoel**: overleg met apotheek of huisarts (zeker als het erger wordt).\n\n"
           . disclaimer();
       }
 
-      return "Algemeen bij medicatie:\n"
-        . "- Gebruik medicatie volgens voorschrift.\n"
-        . "- Bij bijwerkingen of twijfel: apotheek/huisarts.\n"
-        . "- Bewaar een actueel medicatie-overzicht.\n\n"
+      return "Algemeen medicatie:\n- Volg voorschrift\n- Bij twijfel: apotheek\n- Houd medicatie-overzicht bij\n\n"
         . disclaimer();
     }
 
     case "wondzorg": {
-      $sub = sub_wound($q);
+      $bleeding = boolv($meta, "bleeding");
+      $deep = boolv($meta, "deep_wound");
+      $infect = boolv($meta, "infection_signs");
+      $burn = boolv($meta, "burn");
 
-      if ($sub === "bloeding") {
-        return "Bij een wond die **blijft bloeden**:\n"
-          . "- Druk geven met een schone doek/gaas.\n"
-          . "- Hoog houden als dat kan.\n"
-          . "- Als het niet stopt of veel is: huisarts/112.\n\n"
+      if ($bleeding) {
+        return "NU DOEN: **druk geven** met schone doek/gaas.\n"
+          . "Als het niet stopt of veel is: **huisarts/112**.\n\n"
           . disclaimer();
       }
 
-      if ($sub === "infectie") {
-        return "Tekenen die kunnen passen bij **infectie**:\n"
-          . "- Rood/warm, zwelling, pus, toenemende pijn, koorts.\n"
-          . "- Dan is het verstandig om contact op te nemen met huisarts.\n\n"
+      if ($burn) {
+        return "Brandwond (basis):\n- Koel met lauw stromend water (10–20 min)\n- Dek schoon af\n- Bij groot/ernstig: huisarts/112\n\n"
           . disclaimer();
       }
 
-      if ($sub === "brandwond") {
-        return "Bij **brandwonden** (basis):\n"
-          . "- Koel met lauw stromend water (meestal 10–20 minuten).\n"
-          . "- Dek schoon af.\n"
-          . "- Bij grotere of ernstige brandwonden: huisarts/112.\n\n"
+      if ($deep) {
+        return "Bij **diepe wond** (randen wijken / mogelijk hechten): neem contact op met huisarts.\n\n"
           . disclaimer();
       }
 
-      return "Basis wondzorg:\n"
-        . "- Handen wassen, wond spoelen met lauwwarm water.\n"
-        . "- Schoon afdekken met pleister/gaas.\n"
-        . "- Bij diepe wond, aanhoudend bloeden of infectietekenen: huisarts.\n\n"
+      if ($infect) {
+        return "Bij **infectietekenen** (rood/warm/pus/koorts): contact met huisarts.\n\n"
+          . disclaimer();
+      }
+
+      return "Basis wondzorg:\n- Handen wassen\n- Spoelen met lauw water\n- Schoon afdekken\n- Bij twijfel: huisarts\n\n"
         . disclaimer();
     }
 
     case "diabetes": {
-      $sub = sub_diabetes($q);
+      $age = intv($meta, "age");
+      $hypo = boolv($meta, "hypo_signs");
+      $hyper = boolv($meta, "hyper_signs");
+      $ins = boolv($meta, "insulin");
+      $gl = floatv($meta, "glucose_value");
 
-      if ($sub === "hypo") {
-        return "Dit klinkt als een vraag over een **hypo (lage suiker)**.\n"
-          . "- Signalen: trillen, zweten, honger, bleek, verward.\n"
-          . "- Als iemand niet goed kan slikken, wegzakt of verward is: **112**.\n"
-          . "- Anders: snel iets met suiker en daarna opnieuw checken.\n\n"
+      if ($hypo) {
+        return "Dit lijkt op **hypo-signalen**.\n"
+          . "NU DOEN:\n- Als iemand wegzakt/niet kan slikken/erg verward: **112**\n- Anders: iets met suiker en opnieuw checken\n\n"
           . disclaimer();
       }
 
-      if ($sub === "hyper") {
-        return "Dit lijkt meer op **hyper (hoge suiker)**.\n"
-          . "- Signalen kunnen zijn: veel dorst, veel plassen, moe, soms misselijk.\n"
-          . "- Meet als dat kan.\n"
-          . "- Bij ernstige klachten of snelle achteruitgang: huisarts/112.\n\n"
+      if ($hyper) {
+        return "Dit lijkt op **hyper-signalen**.\n"
+          . "NU DOEN:\n- Meet als dat kan\n- Bij ernstig ziek gevoel/achteruitgang: huisarts/112\n\n"
           . disclaimer();
       }
 
-      if ($sub === "meten") {
-        return "Over **meten van glucose** (basis):\n"
-          . "- Noteer de waarde + tijd + klachten.\n"
-          . "- Bij extreem lage/hoge waarden of klachten: contact met zorgverlener.\n\n"
-          . disclaimer();
-      }
-
-      if ($sub === "voeding") {
-        return "Voeding bij diabetes (basis):\n"
-          . "- Let op koolhydraten en regelmaat.\n"
-          . "- Beweging helpt ook.\n"
-          . "- Persoonlijk advies gaat via diëtist/diabetesverpleegkundige.\n\n"
-          . disclaimer();
-      }
+      $extra = "";
+      if ($age >= 75) $extra .= "- Omdat de persoon {$age}+ is: bij klachten sneller overleggen.\n";
+      if ($ins) $extra .= "- Insulinegebruik: hypo/hyper sneller serieus nemen.\n";
+      if ($gl > 0) $extra .= "- Je gaf een waarde door: {$gl} mmol/L. Bij extreme waarden + klachten: contact zorgverlener.\n";
+      if ($extra !== "") $extra = "Extra:\n{$extra}\n";
 
       return "Diabetes (basis):\n"
-        . "- Let op hypo- en hyper-signalen.\n"
-        . "- Meetwaarden + klachten samen zijn belangrijk.\n"
-        . "- Bij twijfel: contact met diabetesverpleegkundige/huisarts.\n\n"
+        . $extra
+        . "CHECKLIST:\n- Welke klachten?\n- Is er gemeten?\n- Eten/insuline recent?\n\n"
         . disclaimer();
     }
 
