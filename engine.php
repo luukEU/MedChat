@@ -63,64 +63,47 @@ function pick(array $variants): string {
 }
 
 /** =========================
- *  Normaliseren + fuzzy match (typo-tolerant)
- *  ========================= */
+ *  Normaliseren + match (stabiel, weinig false positives)
+ *  - we normaliseren (lowercase, accenten eruit, punctuatie -> spaties)
+ *  - matching is in principe substring op de genormaliseerde tekst
+ *  - voor héél korte keywords (<=3) gebruiken we woordgrenzen om onzin-matches te voorkomen
+ * ========================= */
 function norm(string $s): string {
   $s = mb_strtolower($s);
+  // accenten eruit (werkt op WAMP meestal goed)
   $s = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) ?: $s;
   $s = strtolower($s);
   $s = preg_replace('/[^a-z0-9\s]+/u', ' ', $s);
   $s = preg_replace('/\s+/u', ' ', $s);
   return trim($s);
 }
-function tokens(string $s): array {
-  $s = norm($s);
-  return $s === "" ? [] : preg_split('/\s+/u', $s);
-}
-function fuzzy_word_match(string $word, string $kw): bool {
-  $word = norm($word);
-  $kw   = norm($kw);
-  if ($kw === "" || $word === "") return false;
-  if ($word === $kw) return true;
 
-  // snelle win: substring (trap in trappen)
-  if (str_contains($word, $kw) || str_contains($kw, $word)) return true;
-
-  $len = max(strlen($word), strlen($kw));
-  if ($len <= 3) return false; // te kort -> te veel false positives
-  $dist = levenshtein($word, $kw);
-
-  if ($len <= 5) return $dist <= 1;
-  if ($len <= 8) return $dist <= 2;
-  return $dist <= 3;
-}
-function fuzzy_contains(string $text, string $keyword): bool {
+function contains_kw(string $text, string $kw): bool {
   $t = norm($text);
-  $k = norm($keyword);
-  if ($k === "" || $t === "") return false;
+  $k = norm($kw);
+  if ($t === "" || $k === "") return false;
 
-  // 1) snelpad: substring
-  if (str_contains($t, $k)) return true;
-
-  // 2) multi-word keyword: alle delen moeten matchen
-  $kParts = preg_split('/\s+/u', $k);
-  $tWords = tokens($t);
-
-  foreach ($kParts as $part) {
-    $ok = false;
-    foreach ($tWords as $w) {
-      if (fuzzy_word_match($w, $part)) { $ok = true; break; }
-    }
-    if (!$ok) return false;
+  // multi-word keyword -> simpele substring is meestal voldoende
+  if (str_contains($k, " ")) {
+    return str_contains($t, $k);
   }
-  return true;
+
+  // korte keywords (bv. "val") -> check op woordgrens
+  if (strlen($k) <= 3) {
+    return preg_match('/\b' . preg_quote($k, '/') . '\b/u', $t) === 1;
+  }
+
+  return str_contains($t, $k);
 }
+
 function contains_any(string $text, array $words): bool {
   foreach ($words as $w) {
-    if ($w !== "" && fuzzy_contains($text, $w)) return true;
+    $w = (string)$w;
+    if ($w !== "" && contains_kw($text, $w)) return true;
   }
   return false;
 }
+
 
 /** =========================
  *  Upgrade 1: leeftijd automatisch uit tekst halen
@@ -172,7 +155,7 @@ function matched_keywords_for_cat(string $q, string $cat, array $KB, int $limit 
   if (!isset($KB["categories"][$cat])) return [];
   $hits = [];
   foreach (($KB["categories"][$cat]["keywords"] ?? []) as $kw) {
-    if ($kw !== "" && fuzzy_contains($q, $kw)) {
+    if ($kw !== "" && contains_kw($q, $kw)) {
       $hits[] = $kw;
       if (count($hits) >= $limit) break;
     }
@@ -184,7 +167,7 @@ function guess_categories(string $q, array $KB, int $top = 3): array {
   foreach ($KB["categories"] as $cat => $info) {
     $scores[$cat] = 0;
     foreach (($info["keywords"] ?? []) as $kw) {
-      if ($kw !== "" && fuzzy_contains($q, $kw)) {
+      if ($kw !== "" && contains_kw($q, $kw)) {
         $scores[$cat] += kw_weight($kw);
       }
     }
@@ -210,7 +193,7 @@ function is_ambiguous_guess(string $q, array $KB): bool {
 function find_red_flags_in_text(string $q, array $KB): array {
   $found = [];
   foreach ($KB["red_flags"] as $w) {
-    if ($w !== "" && fuzzy_contains($q, $w)) $found[] = $w;
+    if ($w !== "" && contains_kw($q, $w)) $found[] = $w;
   }
   return array_values(array_unique($found));
 }
@@ -231,7 +214,7 @@ function keyword_hit_count_for_cat(string $cat, string $question, array $KB): in
   if (!isset($KB["categories"][$cat])) return 0;
   $count = 0;
   foreach (($KB["categories"][$cat]["keywords"] ?? []) as $kw) {
-    if ($kw !== "" && fuzzy_contains($question, $kw)) $count++;
+    if ($kw !== "" && contains_kw($question, $kw)) $count++;
   }
   return $count;
 }
@@ -545,9 +528,18 @@ function generate_final_answer(string $cat, string $question, array $meta, array
       . disclaimer();
   }
 
-  // Als gebruiker verkeerde categorie koos -> automatisch switchen naar beste match
-  $guessed = guess_category($q, $KB);
-  if ($guessed !== "onbekend" && $guessed !== $cat) {
+  // Als gebruiker de "verkeerde" categorie koos: alleen automatisch switchen als de match echt duidelijk is.
+  // Dit voorkomt rare situaties (bijv. medicatievraag die per ongeluk als "vallen" wordt gelezen).
+  $scores = guess_categories($q, $KB, 3);
+  $guessed = array_key_first($scores);
+  $bestScore = $scores[$guessed] ?? 0;
+  $currentScore = $scores[$cat] ?? 0;
+
+  // switch alleen bij duidelijke winst
+  if ($guessed !== "onbekend"
+      && $guessed !== $cat
+      && $bestScore >= 3
+      && ($bestScore - $currentScore) >= 2) {
     $cat = $guessed;
   }
 
