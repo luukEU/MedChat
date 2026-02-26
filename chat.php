@@ -54,7 +54,6 @@ $topicTitle = $KB["categories"][$cat]["label"] ?? $cat;
           <button class="btn ghost" type="submit">🧹 Chat legen</button>
         </form>
 
-        <a class="btn ghost" href="feedback.php?cat=<?= h($cat) ?>">📝 Feedback</a>
         <button class="btn ghost" id="themeToggle" type="button">🌙 Dark mode</button>
       </div>
     </header>
@@ -152,6 +151,40 @@ $topicTitle = $KB["categories"][$cat]["label"] ?? $cat;
         input.value = btn.getAttribute("data-fill");
         input.focus();
       });
+      <script>
+  function toggleFeedback(){
+    const el = document.getElementById("fbMore");
+    el.style.display = (el.style.display === "none") ? "block" : "none";
+  }
+
+  async function sendFeedback(rating){
+    // Deze 4 waarden moet jij vullen vanuit je eigen code (waar je de laatste vraag/antwoord opslaat)
+    const session_id = window.SESSION_ID || "";
+    const category   = window.LAST_CATEGORY || "";
+    const question   = window.LAST_QUESTION || "";
+    const answer     = window.LAST_ANSWER || "";
+    const comment    = document.getElementById("fbComment")?.value || "";
+
+    const fd = new FormData();
+    fd.append("session_id", session_id);
+    fd.append("category", category);
+    fd.append("question", question);
+    fd.append("answer", answer);
+    fd.append("rating", rating);
+    fd.append("comment", comment);
+
+    const res = await fetch("feedback_save.php", { method:"POST", body: fd });
+    const data = await res.json();
+
+    if (data.ok){
+      alert("Dankjewel! Feedback opgeslagen.");
+      const more = document.getElementById("fbMore");
+      if (more) more.style.display = "none";
+    } else {
+      alert("Feedback opslaan mislukt.");
+    }
+  }
+</script>
     });
   </script>
 </body>
