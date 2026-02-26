@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS feedback (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  session_id VARCHAR(64) NULL,
+  category VARCHAR(50) NULL,
+  question TEXT NULL,
+  answer TEXT NULL,
+  rating TINYINT NULL,
+  comment TEXT NULL,
+  user_ip VARCHAR(45) NULL,
+  user_agent VARCHAR(255) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

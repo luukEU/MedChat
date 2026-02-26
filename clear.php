@@ -15,8 +15,14 @@ if (!in_array($cat, $allowed, true)) {
   exit;
 }
 
+// Clear DB messages
 $stmt = $pdo->prepare("DELETE FROM chat_messages WHERE session_id = ? AND category = ?");
 $stmt->execute([$sessionId, $cat]);
+
+// Clear follow-up state
+if (isset($_SESSION["triage"][$cat])) {
+  unset($_SESSION["triage"][$cat]);
+}
 
 header("Location: chat.php?cat=" . urlencode($cat));
 exit;

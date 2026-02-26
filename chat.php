@@ -1,14 +1,14 @@
 <?php
 require_once "db.php";
 
-$allowed = ["vallen","medicatie","wondzorg","diabetes"];
+$KB = require __DIR__ . "/knowledge.php";
+$allowed = array_keys($KB["categories"] ?? []);
 $cat = $_GET["cat"] ?? "";
 if (!in_array($cat, $allowed, true)) {
   header("Location: index.php");
   exit;
 }
 
-$KB = require __DIR__ . "/knowledge.php";
 $fields = $KB["categories"][$cat]["fields"] ?? [];
 
 session_start();
@@ -54,6 +54,7 @@ $topicTitle = $KB["categories"][$cat]["label"] ?? $cat;
           <button class="btn ghost" type="submit">🧹 Chat legen</button>
         </form>
 
+        <a class="btn ghost" href="feedback.php?cat=<?= h($cat) ?>">📝 Feedback</a>
         <button class="btn ghost" id="themeToggle" type="button">🌙 Dark mode</button>
       </div>
     </header>

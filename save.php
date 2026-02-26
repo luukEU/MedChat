@@ -8,7 +8,7 @@ if (!isset($_SESSION["session_id"])) {
 }
 $sessionId = $_SESSION["session_id"];
 
-$allowed = ["vallen","medicatie","wondzorg","diabetes"];
+$allowed = array_keys($KB["categories"] ?? []);
 $cat = $_POST["category"] ?? "";
 $q = trim($_POST["question"] ?? "");
 

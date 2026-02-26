@@ -14,9 +14,12 @@
         <h1>MedChat Demo</h1>
         <p class="subtitle">Kies een onderwerp en stel je vraag.</p>
       </div>
-      <button class="btn ghost" id="themeToggle" type="button" aria-label="Toggle dark mode">
-        🌙 Dark mode
-      </button>
+      <div class="row">
+        <a class="btn ghost" href="feedback.php">📝 Feedback</a>
+        <button class="btn ghost" id="themeToggle" type="button" aria-label="Toggle dark mode">
+          🌙 Dark mode
+        </button>
+      </div>
     </header>
 
     <div class="notice">
